@@ -7,7 +7,7 @@ from termcolor import cprint
 class SudokuEnv1(gym.Env):
     """reference https://github.com/MorvanZhou/sudoku/blob/master/sudoku.py"""
 
-    def __init__(self, mask_rate=0.5, max_attempts=250, render=False, flatten=True):
+    def __init__(self, mask_rate=0.5, max_attempts=100, render=False, flatten=True):
         self.max_attempts = max_attempts
         self.render = render
         self.flatten = flatten
@@ -45,6 +45,10 @@ class SudokuEnv1(gym.Env):
     def full_observation(self):
         return np.stack((self.observation, self.start > 0))
 
+    @property
+    def filled_squares(self):
+        return int((self.observation[self.start == 0] != 0).sum())
+
     def _get_reward(self, changed):
         if not changed:
             return -10
@@ -54,7 +58,7 @@ class SudokuEnv1(gym.Env):
         elif (self.observation == 0).sum() == 0:
             reward = 1000
         else:
-            reward = int((self.observation[self.start == 0] != 0).sum())
+            reward = self.filled_squares
         return reward
 
     def update_state(self, action):
@@ -131,7 +135,178 @@ class SudokuEnv1(gym.Env):
             changed = self.update_state(action)
         observation = self._get_obs(action)
         reward = self._get_reward(changed)
-        done = reward > 0 or self.attempt == self.max_attempts
+        done = self.filled_squares == (self.start == 0).sum() or self.attempt == self.max_attempts
+        info = self._get_info()
+        if self.render:
+            self.print_render()
+        return observation, reward, done, info
+
+    @classmethod
+    def create_very_easy(cls, **kwargs):
+        return cls(mask_rate=0.1)
+
+    @classmethod
+    def create_easy(cls, **kwargs):
+        return cls(mask_rate=0.3)
+
+    @classmethod
+    def create_normal(cls, **kwargs):
+        return cls(mask_rate=0.5)
+
+    @classmethod
+    def create_hard(cls, **kwargs):
+        return cls(mask_rate=0.7)
+
+    @classmethod
+    def create_very_hard(cls, **kwargs):
+        return cls(mask_rate=0.2)
+
+
+class SudokuEnv2(gym.Env):
+    """reference https://github.com/MorvanZhou/sudoku/blob/master/sudoku.py"""
+
+    def __init__(self, mask_rate=0.5, max_attempts=1000, shuffle=True, render=False, flatten=True):
+        self.max_attempts = max_attempts
+        self.render = render
+        self.flatten = flatten
+        self.mask_rate = mask_rate
+        self.shuffle = shuffle
+
+        if self.flatten:
+            self.observation_space = spaces.MultiDiscrete([10] * 9 * 9 + [2] * 9 * 9 + [2] * 9 * 9 )
+        else:
+            # layer 1 - puzzle numbers
+            # layer 2 - original puzzle bool
+            # layer 3 current square bool
+            self.observation_space = spaces.MultiDiscrete([[[[10] * 9] * 9], [[[2] * 9] * 9], [[[2] * 9] * 9]])
+
+        # x, y, value - coordinates on sudoku puzzle, value to place on space
+        # NOTE action is value to place in square (0 is same as blank)
+        self.action_space = spaces.Discrete(10)
+
+    def count_dupes(self, observation=None):
+        if observation is None:
+            observation = self.observation
+
+        duplicates = 0
+        for i in range(9): 
+            # rows
+            values, counts = np.unique(observation[i, :], return_counts=True)
+            duplicates += sum(counts[(values > 0) & (counts > 1)] - 1)
+            # columns
+            values, counts = np.unique(observation[:, i], return_counts=True)
+            duplicates += sum(counts[(values > 0) & (counts > 1)] - 1)
+            
+        for i in range(3):
+            for j in range(3):
+                values, counts = np.unique(observation[i * 3: i * 3 + 3, j * 3: j * 3 + 3], return_counts=True)
+                duplicates += sum(counts[(values > 0) & (counts > 1)] - 1)
+        return duplicates
+    
+    @property
+    def current_square_coord(self):
+        return self.pairs[self.attempt % len(self.pairs)]
+
+    @property
+    def current_square_msk(self):
+        m = np.zeros((9,9))
+        m[self.current_square_coord] = 1
+        return m
+
+    @property
+    def filled_squares(self):
+        return int((self.observation[self.start == 0] != 0).sum())
+
+    @property
+    def full_observation(self):
+        return np.stack((self.observation, self.start > 0, self.current_square_msk))
+
+    def _get_reward(self, changed):
+        if (self.observation == 0).sum() == 0:
+            reward = 1000
+        else:
+            reward = int(self.filled_squares - self.count_dupes())
+        return reward
+
+    def update_state(self, action):
+        if self.start[self.current_square_coord] == 0:
+            self.observation[self.current_square_coord] = action
+        if self.shuffle and self.attempt % len(self.pairs) == 0:
+            np.random.shuffle(self.pairs)
+        self.attempt += 1
+
+    def _get_obs(self):
+        if self.flatten:
+            return self.full_observation.flatten()
+        return self.full_observation
+    
+    def _get_info(self):
+        return {
+            'attempt': self.attempt,
+            # 'square_coord': self.current_square_coord,
+        }
+    
+    def generate_puzzle(self):
+        while True:
+            n = 9
+            solution = np.zeros((n, n), int)
+            rg = np.arange(1, n + 1)
+            solution[0, :] = np.random.choice(rg, n, replace=False)
+            try:
+                for r in range(1, n):
+                    for c in range(n):
+                        col_rest = np.setdiff1d(rg, solution[:r, c])
+                        row_rest = np.setdiff1d(rg, solution[r, :c])
+                        avb1 = np.intersect1d(col_rest, row_rest)
+                        sub_r, sub_c = r//3, c//3
+                        avb2 = np.setdiff1d(np.arange(0, n+1), solution[sub_r*3:(sub_r+1)*3, sub_c*3:(sub_c+1)*3].ravel())
+                        avb = np.intersect1d(avb1, avb2)
+                        solution[r, c] = np.random.choice(avb, size=1)
+                break
+            except ValueError:
+                pass
+        start = solution.copy()
+        start[np.random.choice([True, False], size=solution.shape, p=[self.mask_rate, 1 - self.mask_rate])] = 0
+        return start, solution
+
+    def reset(self, return_info=False):
+        self.start, self.solution = self.generate_puzzle()
+        self.observation = self.start.copy()
+        self.pairs = coords = [(i, j) for i in range(9) for j in range(9) if self.start[i,j] == 0]
+        if self.shuffle:
+            np.random.shuffle(self.pairs)
+        self.attempt = 0
+        info = self._get_info()
+        if self.flatten:
+            return (self.full_observation.flatten(), info) if return_info else self.full_observation.flatten()
+        return (self.full_observation, info) if return_info else self.full_observation
+    
+    def print_render(self, observation=None):
+        if observation is None:
+            observation = self.observation
+        print(f'\nattempt: {self.attempt}')
+        print(f'\ncoordintate: {self.current_square_coord}')
+        for i, (number_row, start_row) in enumerate(zip(observation, (self.start > 0).astype(bool))):
+            if i in [3, 6]:
+                print ('-------+-------+-------')
+            print(' ', end='')
+            for j, (number, start) in enumerate(zip(number_row, start_row)):
+                if j in [3, 6]:
+                    print('| ', end='')
+                if number == 0:
+                    number = ' '
+                if start:
+                    cprint(number, attrs=['underline'], end=' ')
+                else:
+                    print(number, end=' ')
+            print()
+    
+    def step(self, action):
+        if action is not None:
+            changed = self.update_state(action)
+        observation = self._get_obs()
+        reward = self._get_reward(changed)
+        done = self.filled_squares == len(self.pairs) or self.attempt == self.max_attempts
         info = self._get_info()
         if self.render:
             self.print_render()
@@ -180,6 +355,14 @@ class MinesweeperEnvBase(gym.Env):
     def trimmed_observation(self):
         return np.where(self.display.astype(bool), self.observation, 9)[1: -1, 1: -1]
 
+    @property
+    def revealed(self):
+        return self.display[1:-1, 1:-1][self.observation[1:-1, 1:-1] != 9].sum()
+
+    @property
+    def remaining(self):
+        return self.width * self.height - self.revealed - self.bombs
+
     def _get_reward(self, hit):
         if hit == 'bomb':
             return -100
@@ -225,9 +408,12 @@ class MinesweeperEnvBase(gym.Env):
             return self.trimmed_observation.flatten()
         return self.trimmed_observation
     
-    def _get_info(self):
+    def _get_info(self, hit=None):
         return {
             'attempt': self.attempt,
+            'remaining': self.remaining,
+            'revealed': self.revealed,
+            'hit': hit,
         }
     
     def place_bombs(self, action):
@@ -273,11 +459,16 @@ class MinesweeperEnvBase(gym.Env):
             hit = self.update_state(action)
         observation = self._get_obs()
         reward = self._get_reward(hit)
-        done = hit == 'bomb' or self.attempt == self.max_attempts
-        info = self._get_info()
+        done = bool(hit == 'bomb' or self.attempt > self.max_attempts or self.remaining == 0)
+        info = self._get_info(hit)
         if self.render:
             self.print_render()
         return observation, reward, done, info
+
+
+class MinesweeperEnvBaby(MinesweeperEnvBase):
+    def __init__(self, **kwargs):
+        return super().__init__(height=5, width=5, bombs=4, **kwargs)
 
 
 class MinesweeperEnvBeginner(MinesweeperEnvBase):
