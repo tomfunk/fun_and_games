@@ -4,22 +4,25 @@ from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.env_util import make_vec_env
 import torch as th
 
-check_env(envs.MinesweeperEnvBeginner(), warn=True)
+check_env(envs.MinesweeperEnvIntermediate(), warn=True)
 
-n_envs = 1
-many_env = make_vec_env(envs.MinesweeperEnvBeginner, n_envs=n_envs)
+n_envs = 64
+many_env = make_vec_env(envs.MinesweeperEnvIntermediate, n_envs=n_envs)
+tb_log_name = 'PPO_2'
+tensorboard_log = "./ppo_minesweeper_tensorboard/"
 
-policy_kwargs = dict(activation_fn=th.nn.ReLU, net_arch=[dict(pi=[256, 256, 256], vf=[256, 256, 256])])
-# policy_kwargs = dict()
+# policy_kwargs = dict(activation_fn=th.nn.ReLU, net_arch=[dict(pi=[256, 256, 256], vf=[256, 256, 256])])
+policy_kwargs = dict()
 
+# train
 model = PPO(
-    'MlpPolicy', many_env, policy_kwargs=policy_kwargs, verbose=1, n_steps=2, batch_size=2,
-    gamma=0.9999,
-    tensorboard_log="./ppo_minesweeper_tensorboard/"
+    'MlpPolicy', many_env, policy_kwargs=policy_kwargs,
+    tensorboard_log=tensorboard_log
 )
-model.learn(total_timesteps=15000, tb_log_name='PPO_0')#, eval_env=eval_env, eval_freq=n_envs*100)
-model.save('ms_ppo0')
+model.learn(total_timesteps=50000000, tb_log_name=tb_log_name, eval_freq=1000, n_eval_episodes=10,)#, eval_env=eval_env, eval_freq=n_envs*100)
+model.save('ms_int_ppo1')
 
-# model = PPO.load('ppo0', env=many_env, tensorboard_log="./ppo_minesweeper_tensorboard/")
-# model.learn(total_timesteps=8000000, reset_num_timesteps=False, tb_log_name='PPO_0')
-# model.save('ppo0')
+# # retrain
+# model = PPO.load('ms_beginner_ppo2', env=many_env, tensorboard_log=tensorboard_log)
+# model.learn(total_timesteps=10000000, reset_num_timesteps=False, tb_log_name=tb_log_name)
+# model.save('ms_beginner_ppo3')
