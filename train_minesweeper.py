@@ -15,14 +15,14 @@ tensorboard_log = "./ppo_minesweeper_tensorboard/"
 policy_kwargs = dict()
 
 # train
-model = PPO(
-    'MlpPolicy', many_env, policy_kwargs=policy_kwargs,
-    tensorboard_log=tensorboard_log
-)
-model.learn(total_timesteps=50000000, tb_log_name=tb_log_name, eval_freq=1000, n_eval_episodes=10,)#, eval_env=eval_env, eval_freq=n_envs*100)
-model.save('ms_int_ppo1')
+# model = PPO(
+#     'MlpPolicy', many_env, policy_kwargs=policy_kwargs,
+#     tensorboard_log=tensorboard_log
+# )
+# model.learn(total_timesteps=50000000, tb_log_name=tb_log_name, eval_freq=1000, n_eval_episodes=10,)#, eval_env=eval_env, eval_freq=n_envs*100)
+# model.save('ms_int_ppo1')
 
-# # retrain
-# model = PPO.load('ms_beginner_ppo2', env=many_env, tensorboard_log=tensorboard_log)
-# model.learn(total_timesteps=10000000, reset_num_timesteps=False, tb_log_name=tb_log_name)
-# model.save('ms_beginner_ppo3')
+# retrain
+model = PPO.load('ms_int_ppo2', env=many_env, tensorboard_log=tensorboard_log)
+model.learn(total_timesteps=50000000, reset_num_timesteps=False, tb_log_name=tb_log_name)
+model.save('ms_int_ppo3')
